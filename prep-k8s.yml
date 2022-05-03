@@ -1,0 +1,156 @@
+---
+- name: Prep for K8S Worker or Control Node on Debial 11
+  hosts: all
+  tasks:
+    - name: Update all packages to their latest version
+      apt:
+        name: "*"
+        state: latest  
+
+    - name: Creating Required Directories if does not exist
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: 0755
+      with_items:
+        - "/etc/containerd"
+        - "/etc/modules-load.d"
+        
+    # clean up files from any previous install attempts
+    - name: Remove gpg files if present
+      file:
+        path: "{{ item }}"
+        state: absent
+      with_items:
+        - "/usr/share/keyrings/docker-archive-keyring.gpg"
+        - "/usr/share/keyrings/kubernetes-archive-keyring.gpg"
+        - "/etc/apt/sources.list.d/docker.list"
+        - "/etc/apt/sources.list.d/kubernetes.list"
+        - "/etc/containerd/config.toml"
+
+    - name: Creating an missing files if does not exist
+      file:
+        path: "{{ item }}"
+        state: touch 
+        mode: 0644   
+      with_items:
+        - "/etc/modules-load.d/containerd.conf"
+        - "/etc/sysctl.d/99-kubernetes-cri.conf"
+
+    - name: Add containerd.conf Modules
+      lineinfile:
+        path: /etc/modules-load.d/containerd.conf
+        line: "{{ item }}"
+        state: present
+        insertbefore: BOF
+      with_items:
+        - "overlay"
+        - "br_netfilter"
+   
+    - name: Add 99-kubernetes-cri.conf
+      lineinfile:
+        path: /etc/sysctl.d/99-kubernetes-cri.conf
+        line: "{{ item }}"
+        state: present
+        insertbefore: BOF
+      with_items:
+        - "net.ipv4.ip_forward = 1"
+        - "net.bridge.bridge-nf-call-iptables = 1"   
+        - "net.bridge.bridge-nf-call-ip6tables = 1"
+
+
+        
+    - name: Install initial dependent packages"
+      apt: 
+        name:  "{{ item }}"
+        state: present
+      with_items:
+        - "chrony"
+        - "nfs-common" 
+        - "curl"
+        - "gpg"
+        - "lsb-release"
+        - "apparmor"
+        - "apparmor-utils"
+    
+    # Remove if already exists - else hang
+    - name: Get docker-archive-keyring.gpg
+      shell: 
+        curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+
+    - name: Load docker-archive-keyring.gpg
+      shell:   
+        echo "deb [arch=amd64 signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/debian $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+    - name: Update APT Cache with new docker-archive
+      apt:
+        update_cache: yes
+
+    - name: Update all packages to their latest version
+      apt:
+        name: "*"
+        state: latest  
+
+    - name: Install Containerd
+      apt: 
+        name:  "{{ item }}"
+        state: present
+      with_items:
+        - "containerd.io"
+
+
+    - name: Create containerd toml
+      shell:  containerd config default | tee /etc/containerd/config.toml
+
+    - name: restart containerd
+      service:
+        name: containerd
+        state: restarted
+    
+    - name: Install ca-certs"
+      apt: 
+        name:  "{{ item }}"
+        state: present
+      with_items:
+        - "apt-transport-https"
+        - "ca-certificates" 
+
+    # Remove if already exists - else hang
+    - name: Get kubernetes archive keyring
+      shell:  
+        "curl -fsSLo /usr/share/keyrings/kubernetes-archive-keyring.gpg  https://packages.cloud.google.com/apt/doc/apt-key.gpg"
+
+    - name: Load kubernetes archive keyring
+      shell:   
+        echo "deb [signed-by=/usr/share/keyrings/kubernetes-archive-keyring.gpg] https://apt.kubernetes.io/ kubernetes-xenial main" | tee /etc/apt/sources.list.d/kubernetes.list
+
+    - name: Update APT Cache with new kubernetes-archive
+      apt:
+        update_cache: yes
+
+    - name: Update all packages to their latest version
+      apt:
+        name: "*"
+        state: latest  
+
+    - name: Install Networking and K8S
+      apt: 
+        name:  "{{ item }}"
+        state: present
+        force: yes
+      with_items:
+        - "iptables"
+        - "libiptc0"
+        - "libxtables12"
+        - "kubelet=1.21.0-00"
+        - "kubeadm=1.21.0-00"
+        - "kubectl=1.21.0-00"
+
+    - name: Hold kubeadm
+      dpkg_selections:
+        name:  "{{ item }}"
+        selection: hold    
+      with_items:
+        - "kubelet"
+        - "kubeadm"
+        - "kubectl"
